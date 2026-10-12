@@ -1,0 +1,2 @@
+# Optional Stage 2 only. Stage 1 uses Python's standard library.
+pywin32==311; sys_platform == "win32"
