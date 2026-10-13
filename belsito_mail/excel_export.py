@@ -6,6 +6,7 @@ string, so even subjects beginning with ``=`` remain text in Excel.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 from pathlib import Path
 import tempfile
@@ -23,6 +24,18 @@ _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CONTENT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+_CORE_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+_DC_NS = "http://purl.org/dc/elements/1.1/"
+_DCTERMS_NS = "http://purl.org/dc/terms/"
+_XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+
+# Use the conventional Office prefixes for cross-namespace attributes and
+# metadata. No global default namespace is set: each package part needs its own.
+for _prefix, _namespace in (
+    ("r", _REL_NS), ("cp", _CORE_NS), ("dc", _DC_NS),
+    ("dcterms", _DCTERMS_NS), ("xsi", _XSI_NS),
+):
+    ET.register_namespace(_prefix, _namespace)
 _HEADERS = (
     "Status", "Priority", "Categories", "Received", "Sender", "Email",
     "Subject", "Suggested action", "Reason", "Due date", "Source",
@@ -31,6 +44,21 @@ _WIDTHS = (14, 12, 30, 25, 24, 32, 55, 66, 66, 14, 20)
 
 
 def _xml_bytes(root: ET.Element) -> bytes:
+    """Write SpreadsheetML/OPC with the default namespaces used by Excel.
+
+    ElementTree's generated ns0 prefixes are legal XML, but retain conventional
+    Office serialization for compatibility with Excel's package readers. Work
+    on a copy and declare the default namespace per part, without switching the
+    process-wide default namespace registry while other exports might run.
+    """
+    namespace = root.tag.split("}", 1)[0].removeprefix("{")
+    if namespace in (_SHEET_NS, _PACKAGE_REL_NS, _CONTENT_NS):
+        root = deepcopy(root)
+        marker = "{" + namespace + "}"
+        for element in root.iter():
+            if isinstance(element.tag, str) and element.tag.startswith(marker):
+                element.tag = element.tag[len(marker):]
+        root.set("xmlns", namespace)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -134,11 +162,11 @@ def _styles() -> bytes:
     fonts = ET.SubElement(root, f"{{{_SHEET_NS}}}fonts", {"count": "3"})
     for size, bold, color in ((11, False, "FF243047"), (18, True, "FF18344F"), (11, True, "FFFFFFFF")):
         font = ET.SubElement(fonts, f"{{{_SHEET_NS}}}font")
-        ET.SubElement(font, f"{{{_SHEET_NS}}}sz", {"val": str(size)})
-        ET.SubElement(font, f"{{{_SHEET_NS}}}name", {"val": "Calibri"})
-        ET.SubElement(font, f"{{{_SHEET_NS}}}color", {"rgb": color})
         if bold:
             ET.SubElement(font, f"{{{_SHEET_NS}}}b")
+        ET.SubElement(font, f"{{{_SHEET_NS}}}sz", {"val": str(size)})
+        ET.SubElement(font, f"{{{_SHEET_NS}}}color", {"rgb": color})
+        ET.SubElement(font, f"{{{_SHEET_NS}}}name", {"val": "Calibri"})
     fills = ET.SubElement(root, f"{{{_SHEET_NS}}}fills", {"count": "3"})
     for pattern in ("none", "gray125", "solid"):
         fill = ET.SubElement(fills, f"{{{_SHEET_NS}}}fill")
@@ -198,17 +226,12 @@ def _parts(sheet: bytes, reviewed_at: datetime) -> dict[str, bytes]:
         ET.SubElement(workbook_rels, f"{{{_PACKAGE_REL_NS}}}Relationship", {
             "Id": identifier, "Type": f"{_REL_NS}/{kind}", "Target": target,
         })
-    core_ns = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
-    dc_ns = "http://purl.org/dc/elements/1.1/"
-    dcterms_ns = "http://purl.org/dc/terms/"
-    xsi_ns = "http://www.w3.org/2001/XMLSchema-instance"
-    core = ET.Element(f"{{{core_ns}}}coreProperties", {"xmlns:dcterms": dcterms_ns})
-    ET.SubElement(core, f"{{{dc_ns}}}title").text = "Belsito Plumbing Daily Follow-up Report"
-    ET.SubElement(core, f"{{{dc_ns}}}creator").text = "Belsito Plumbing Email Assistant"
+    core = ET.Element(f"{{{_CORE_NS}}}coreProperties")
+    ET.SubElement(core, f"{{{_DC_NS}}}title").text = "Belsito Plumbing Daily Follow-up Report"
+    ET.SubElement(core, f"{{{_DC_NS}}}creator").text = "Belsito Plumbing Email Assistant"
     utc_time = reviewed_at.replace(tzinfo=timezone.utc) if reviewed_at.tzinfo is None else reviewed_at.astimezone(timezone.utc)
-    # The QName in xsi:type must resolve even though ElementTree chooses its
-    # own prefix for the created element.
-    ET.SubElement(core, f"{{{dcterms_ns}}}created", {f"{{{xsi_ns}}}type": "dcterms:W3CDTF"}).text = utc_time.isoformat(timespec="seconds").replace("+00:00", "Z")
+    # dcterms is also used by the element, so the QName in xsi:type is bound.
+    ET.SubElement(core, f"{{{_DCTERMS_NS}}}created", {f"{{{_XSI_NS}}}type": "dcterms:W3CDTF"}).text = utc_time.isoformat(timespec="seconds").replace("+00:00", "Z")
     return {
         "[Content_Types].xml": _xml_bytes(content),
         "_rels/.rels": _xml_bytes(relationships),

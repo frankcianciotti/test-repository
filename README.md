@@ -58,6 +58,6 @@ python -m belsito_mail --sample-check
 
 The tests use synthetic messages and fake COM objects; they do not access a mailbox. `--sample-check --export sample-report.xlsx` creates a sample workbook at the specified path. A command-line sample check does not enable Stage 2; the interactive acceptance checks and acknowledgement are still required.
 
-The delivered version passed 60 automated tests in the cloud, including the Tkinter interface on a temporary test display. An independent spreadsheet reader opened the generated sample workbook. Native Windows appearance, Microsoft Excel's own opening check, and actual Outlook Classic/POP access remain pending your staged test.
+The current version passed 62 automated tests in the cloud, including the Tkinter interface on a temporary test display. Independent spreadsheet readers opened the sample workbook. An Excel-format compatibility update is included following a repair warning during the Windows sample test. Re-export and verify the workbook in Microsoft Excel before completing Stage 1. Actual Outlook Classic/POP access still requires the separately approved Stage 2 test.
 
 A packaged executable, automatic scheduled reports, custom rule editor, external AI connection and QuickBooks access are future work, not part of this version.

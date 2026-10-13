@@ -1,6 +1,7 @@
 """Exercise workbook contents and safe export behavior using only stdlib."""
 
 from datetime import date, datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -90,6 +91,46 @@ class ExcelExportTests(unittest.TestCase):
         self.assertEqual(_text(sheet, "J6"), "")
         self.assertEqual(_text(sheet, "K5"), "sample")
         self.assertEqual(sheet.find("s:autoFilter", _NS).attrib["ref"], "A4:K6")
+
+    def test_office_parts_use_conventional_default_namespaces_and_bound_prefixes(self):
+        self._export([_item()])
+        namespaces = {
+            "[Content_Types].xml": "http://schemas.openxmlformats.org/package/2006/content-types",
+            "_rels/.rels": "http://schemas.openxmlformats.org/package/2006/relationships",
+            "xl/_rels/workbook.xml.rels": "http://schemas.openxmlformats.org/package/2006/relationships",
+            "xl/workbook.xml": _NS["s"],
+            "xl/styles.xml": _NS["s"],
+            "xl/worksheets/sheet1.xml": _NS["s"],
+        }
+        with ZipFile(self.path) as archive:
+            for name, namespace in namespaces.items():
+                with self.subTest(part=name):
+                    data = archive.read(name)
+                    declared = dict(event for _, event in ET.iterparse(BytesIO(data), events=("start-ns",)))
+                    self.assertEqual(declared.get(""), namespace)
+                    self.assertNotIn(b"ns0:", data)
+                    self.assertTrue(ET.fromstring(data).tag.startswith("{" + namespace + "}"))
+            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+            sheet = workbook.find("s:sheets/s:sheet", _NS)
+            self.assertEqual(sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"], "rId1")
+            core_data = archive.read("docProps/core.xml")
+            declared = dict(event for _, event in ET.iterparse(BytesIO(core_data), events=("start-ns",)))
+            self.assertEqual(declared["dcterms"], "http://purl.org/dc/terms/")
+            created = ET.fromstring(core_data).find("{http://purl.org/dc/terms/}created")
+            self.assertEqual(created.attrib["{http://www.w3.org/2001/XMLSchema-instance}type"], "dcterms:W3CDTF")
+
+    def test_fonts_follow_microsoft_office_schema_order(self):
+        self._export([_item()])
+        with ZipFile(self.path) as archive:
+            styles = ET.fromstring(archive.read("xl/styles.xml"))
+        fonts = styles.findall("s:fonts/s:font", _NS)
+        # Relevant subsequence of CT_Font's Microsoft Open XML SDK particle:
+        # b, ..., sz, color, name. This checks the interoperability contract.
+        order = {name: i for i, name in enumerate(("b", "sz", "color", "name"))}
+        self.assertEqual(len(fonts), 3)
+        for font in fonts:
+            positions = [order[child.tag.split("}", 1)[1]] for child in font]
+            self.assertEqual(positions, sorted(positions))
 
     def test_email_text_cannot_create_formulas_links_or_external_references(self):
         subjects = (
